@@ -1,9 +1,10 @@
 
 
-$CurrentUser = $(whoami.exe)
+$CurrentUser = $(whoami.exe).toString().replace("cronos\", "")
 [bool]$IsDomainAdmin = (Get-ADUser $CurrentUser -Properties memberof).memberof -contains (Get-ADGroup "Domain Admins")  
 
 if($IsDomainAdmin) {
+    Write-Host "Authenticated as: $CurrentUser"
     MainMenu($CurrentUser)
 }
 else {
@@ -21,15 +22,10 @@ function MainMenu {
             1 { }
             2 { }
             3 { }
-            Default { help(); }
+            "Q" { Exit }
+            Default {}
         }
-        
-
     }
-}
-
-function help {
-
 }
 
 function unlock {
@@ -50,7 +46,7 @@ function checkExpire {
     param ( $DaysUntilExpired )
 
     Get-ADUser -filter {Enabled -eq $True -and PasswordNeverExpires -eq $False} –Properties "DisplayName", "msDS-UserPasswordExpiryTimeComputed" |
-    Select-Object -Property "Displayname",@{Name="ExpiryDate";Expression={[datetime]::FromFileTime($_."msDS-UserPasswordExpiryTimeComputed")}} |
-    Where-Object ($_.ExpiryDate -lt )
+    Select-Object -Property "Displayname",@{Name="ExpiryDate";Expression={[datetime]::FromFileTime($_."msDS-UserPasswordExpiryTimeComputed")}} #|
+    #Where-Object ($_.ExpiryDate -lt )
 
 }
