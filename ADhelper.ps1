@@ -1,3 +1,9 @@
+# Name: ADhelper.ps1
+# 
+#
+#
+#
+
 
 # This function returns true if the shell is being run by a Domain Admin and false if not.
 function Authenticate {
@@ -10,10 +16,11 @@ function ShowHeader {
     param( $title )
     $width = $Host.UI.RawUI.WindowSize.Width
     $startTitle = [math]::Floor((($width / 2) - ($title.length / 2)))
+
+    Write-Host "`n"
     for($index = 0; $index -lt $width; $index++) {
-        # Print the title if at the half way point
         if($index -eq $startTitle ) {
-            Write-Host -NoNewline $title
+            Write-Host $title -NoNewline -ForegroundColor Green
             $index = $index + $title.length
         }
         Write-Host -NoNewline "="
@@ -21,65 +28,8 @@ function ShowHeader {
     Write-Host "`n"
 }
 
-function ShowOptions {
-
-}
-
-
-function MainMenu {
-    do {
-
-        ShowHeader(" Main Menu ")
-
-        $unlock = New-Object System.Management.Automation.Host.ChoiceDescription '&Unlock'
-        $validateAccount = New-Object System.Management.Automation.Host.ChoiceDescription '&Validate Account'
-        $lastChange = New-Object System.Management.Automation.Host.ChoiceDescription '&Last Change'
-        $nextExpire = New-Object System.Management.Automation.Host.ChoiceDescription '&Next Expire'
-        $options = [System.Management.Automation.Host.ChoiceDescription[]]($unlock, $validateAccount, $lastChange, $nextExpire)
-        $prompt = $Host.UI.PromptForChoice("", "Select the script to run", $options)
-
-        switch ($prompt) {
-            0 { 
-                Clear-Host
-                ShowHeader(" Unlock ")
-                unlock 
-            }
-            1 { 
-                Clear-Host
-                ShowHeader(" Validate Account ")
-                validateAccount
-            }
-            2 { 
-                Clear-Host
-                ShowHeader(" Next Expire ")
-                checkExpire
-            }
-            3 {
-                Clear-Host
-                ShowHeader(" Last Changed ")
-                lastChanged
-            }
-            4 {
-                Clear-Host
-                ShowHeader(" Help Menu ")
-                helpMenu
-            }
-            Default {
-                Write-Host "Invalid Entry" -ForegroundColor Red
-                Start-Sleep -Seconds 2
-                Clear-Host
-            }
-        }
-    }
-    until($prompt -eq "q")
-}
-
-function helpMenu {
-    Write-Host "Add help menu"
-}
-
 # Unlock a specified users account
-function unlock {
+function unlockUser {
 
     Write-Host "Enter the name of the locked account firstname.lastname"
     $UserName = Read-Host ">>>"
@@ -96,52 +46,85 @@ function unlock {
     }
 }
 
-# Show all passwords expiring in the next 30 days
-function checkExpire {
+function passwordUpdates {
     param ( $DaysUntilExpired )
 
-    Get-ADUser -filter {Enabled -eq $True -and PasswordNeverExpires -eq $False} –Properties "DisplayName", "msDS-UserPasswordExpiryTimeComputed" |
-    Select-Object -Property "Displayname",@{Name="ExpiryDate";Expression={[datetime]::FromFileTime($_."msDS-UserPasswordExpiryTimeComputed")}} #|
-    #Where-Object ($_.ExpiryDate -lt )
+    $ExpireList = (Get-ADUser -filter {Enabled -eq $True -and PasswordNeverExpires -eq $False} –Properties "DisplayName", "msDS-UserPasswordExpiryTimeComputed" |
+    Select-Object -Property "Displayname",@{Name="ExpiryDate";Expression={[datetime]::FromFileTime($_."msDS-UserPasswordExpiryTimeComputed")}})
+    
 }
 
-# Show all passwords changed in the last 30 days
-function lastChanged {
+function compareAccounts {
 
-}
-
-function validateAccount {
+    param($FirstUser, $SecondUser)
 
     $Usercomparison = @()
 
-    $user1 = Get-ADUser Nathan.Mcbride -Properties *
-    $user2 = Get-ADUser Frank.Zappa -Properties *
+    $ADUser1 = Get-ADUser $FirstUser -Properties *
+    $ADUser2 = Get-ADUser $SecondUser -Properties *
 
-    $user1.GetEnumerator() | ForEach-Object {
+    $ADUser1.GetEnumerator() | ForEach-Object {
 
-        If ($User2.($_.Key) -eq $_.Value) { 
-                 $Comparison = 'Equal'
-        } else { $Comparison = 'Different' } 
+        If ($ADUser2.($_.Key) -eq $_.Value) { 
+            $Match = $true
+        } else { 
+            $Match = $false
+        }
 
         $UserObj = New-Object PSObject -Property ([ordered]@{
             Property = $_.Key
             User1 = $_.Value
-            User2 = $User2.($_.Key)
-            Comparison = $Comparison
+            User2 = $ADUser2.($_.Key)
+            Match = $Match
         })
-
         $UserComparison += $UserObj
     }
 
-    $Usercomparison | Format-Table
+    For($index = 0; $index -lt $Usercomparison.length; $index ++) {
+        If($Usercomparison[$index].Match) {
+            Write-Host $Usercomparison[$index].Property -ForegroundColor Green
+        }
+        else {
+            Write-Host $Usercomparison[$index].Property -ForegroundColor Red
+        }
+    }
 }
 
 # Begin!
-if(Authenticate) { 
-    MainMenu
+#if(Authenticate) { 
+
+    $unlockUser = New-Object System.Management.Automation.Host.ChoiceDescription '&Unlock User'
+    $compareAccounts = New-Object System.Management.Automation.Host.ChoiceDescription '&Compare Accounts'
+    $passwordUpdates = New-Object System.Management.Automation.Host.ChoiceDescription '&Password Updates'
+    $validOptions = [System.Management.Automation.Host.ChoiceDescription[]]($unlockUser, $compareAccounts, $passwordUpdates)
+
+    do {
+        ShowHeader(" Main Menu ")
+        $prompt = $Host.UI.PromptForChoice("", "", $validOptions, 0)
+
+        switch ($prompt) {
+            0 { 
+                ShowHeader(" Unlock User ")
+                unlockUser 
+            }
+            1 { 
+                ShowHeader(" Compare Accounts ")
+                compareAccounts
+            }
+            2 { 
+                ShowHeader(" Password Updates ")
+                passwordUpdates
+            }
+            Default {
+                Write-Host "Invalid Entry" -ForegroundColor Red
+            }
+        }
+    }
+    until($prompt -eq "q") # Fix no quit bug
+
     Exit 
-} 
-else {
-    Write-Host "You must be a Domain Administrator to run this script." -ForegroundColor Red
-    Exit
-}
+#} 
+#else {
+#    Write-Host "You must be a Domain Administrator to run this script." -ForegroundColor Red
+#    Exit
+#}
