@@ -1,27 +1,61 @@
+# ==============================================
 # Name: ADhelper.ps1
 # 
+# Description:
+#   This script was designed 
 #
 #
 #
+# ==============================================
 
+# 
+Function Authenticate {
+    $Credential = $host.ui.PromptForCredential("Authentication Required", "Please enter your Domain Admin credentials.", "", "NetBiosUserName") 
 
-# This function returns true if the shell is being run by a Domain Admin and false if not.
-function Authenticate {
-    $CurrentUser = $(whoami.exe).toString().replace("cronos\", "")
-    [bool]$IsDomainAdmin = (Get-ADUser $CurrentUser -Properties memberof).memberof -contains (Get-ADGroup "Domain Admins")  
-    return $IsDomainAdmin
+    # Get current domain using logged-on user's credentials
+    $CurrentDomain = "LDAP://" + ([ADSI]"").distinguishedName
+
+    # Test the credentials by creating a new directory entry 
+    $Domain = New-Object System.DirectoryServices.DirectoryEntry($CurrentDomain,$Credential.UserName,$Credential.GetNetworkCredential().password)
+
+    if ($Domain.name -eq $null) {
+        write-host "Authentication failed - please verify your username and password." -ForegroundColor Red
+        Exit
+    }
+    else {
+        write-host "Authentication Sucessful" -ForegroundColor Green
+        Return $Credential
+    }
 }
 
-function ShowHeader {
-    param( $title )
-    $width = $Host.UI.RawUI.WindowSize.Width
-    $startTitle = [math]::Floor((($width / 2) - ($title.length / 2)))
+# Prompts the user for an input and wont return unless it's valid
+Function grabValidInput {
+    [bool]$Valid = $false
+
+    While($Valid -eq $false) {
+        $Prompt = Read-Host ">>>"
+        # Valid Inputs are specified here
+        If($Prompt -eq 0 || 1 || 2 || 3 ) {
+            $Valid = $true
+        } 
+        else {
+            Write-Host "Invalid Input" -ForegroundColor Red
+        }
+    }
+    Return $prompt
+}
+
+# Displays a header containing the page title for style
+Function showHeader {
+    param($Title)
+    $Width = $Host.UI.RawUI.WindowSize.Width
+    $StartTitle = [math]::Floor((($Width / 2) - ($Title.length / 2)))
 
     Write-Host "`n"
-    for($index = 0; $index -lt $width; $index++) {
-        if($index -eq $startTitle ) {
-            Write-Host $title -NoNewline -ForegroundColor Green
-            $index = $index + $title.length
+    For($Index = 0; $Index -lt $Width; $Index++) {
+        If($Index -eq $StartTitle ) {
+            Write-Host $Title -NoNewline -ForegroundColor Green
+            $Index = $Index + $Title.length
         }
         Write-Host -NoNewline "="
     }
@@ -30,14 +64,12 @@ function ShowHeader {
 
 # Unlock a specified users account
 function unlockUser {
-
-    Write-Host "Enter the name of the locked account firstname.lastname"
-    $UserName = Read-Host ">>>"
+    param($Authorization, $UserName)
 
     # Search for a locked out account matching the name provided by the user.
-    $ADaccount = Search-ADAccount -LockedOut | Where-Object { $_.SamAccountName -match $UserName.ToString() }
+    $ADaccount = Search-ADAccount -LockedOut -Credential $Authorization | Where-Object { $_.SamAccountName -match $UserName.ToString() }
     if( ($ADaccount) ) {
-        Unlock-ADAccount -Identity $ADaccount
+        Unlock-ADAccount -Identity $ADaccount -Credential $Authorization
         Write-Host $ADaccount.SamAccountName "unlocked sucessfuly" -ForegroundColor Green
     }
     # Account does not exist or is not locked.
@@ -46,22 +78,12 @@ function unlockUser {
     }
 }
 
-function passwordUpdates {
-    param ( $DaysUntilExpired )
-
-    $ExpireList = (Get-ADUser -filter {Enabled -eq $True -and PasswordNeverExpires -eq $False} –Properties "DisplayName", "msDS-UserPasswordExpiryTimeComputed" |
-    Select-Object -Property "Displayname",@{Name="ExpiryDate";Expression={[datetime]::FromFileTime($_."msDS-UserPasswordExpiryTimeComputed")}})
-    
-}
-
 function compareAccounts {
-
-    param($FirstUser, $SecondUser)
+    param($Authorization, $FirstUser, $SecondUser)
 
     $Usercomparison = @()
-
-    $ADUser1 = Get-ADUser $FirstUser -Properties *
-    $ADUser2 = Get-ADUser $SecondUser -Properties *
+    $ADUser1 = Get-ADUser $FirstUser -Properties * -Credential $Authorization
+    $ADUser2 = Get-ADUser $SecondUser -Properties * -Credential $Authorization
 
     $ADUser1.GetEnumerator() | ForEach-Object {
 
@@ -90,41 +112,59 @@ function compareAccounts {
     }
 }
 
-# Begin!
-#if(Authenticate) { 
+function passwordCheck {
+    param ($Authorization, $DaysUntilExpired)
 
-    $unlockUser = New-Object System.Management.Automation.Host.ChoiceDescription '&Unlock User'
-    $compareAccounts = New-Object System.Management.Automation.Host.ChoiceDescription '&Compare Accounts'
-    $passwordUpdates = New-Object System.Management.Automation.Host.ChoiceDescription '&Password Updates'
-    $validOptions = [System.Management.Automation.Host.ChoiceDescription[]]($unlockUser, $compareAccounts, $passwordUpdates)
+    $ExpireList = (Get-ADUser -filter {Enabled -eq $True -and PasswordNeverExpires -eq $False} –Properties "DisplayName", "msDS-UserPasswordExpiryTimeComputed" |
+    Select-Object -Property "Displayname",@{Name="ExpiryDate";Expression={[datetime]::FromFileTime($_."msDS-UserPasswordExpiryTimeComputed")}})
 
-    do {
-        ShowHeader(" Main Menu ")
-        $prompt = $Host.UI.PromptForChoice("", "", $validOptions, 0)
+    # Make expire list a hash table
+    # Loop through each object comparing dates
+    # If the date matches print the object
+    $ExpireList.GetEnumerator() | ForEach-Object {
+       # If()
+    }
 
-        switch ($prompt) {
-            0 { 
-                ShowHeader(" Unlock User ")
-                unlockUser 
-            }
+
+    
+}
+
+# Begin Script!
+showHeader(" Authentication Required ")
+$Credential = Authenticate
+
+If($Credential) {
+    Do {
+        showHeader(" Main Menu ")
+        Write-Host " 1. Unlock User Account"
+        Write-Host " 2. Compare Two User Accounts"
+        Write-Host " 3. Check Password Changes"
+        Write-Host " 0. Quit`n"
+    
+        $prompt = grabValidInput
+        Switch ($prompt) {
             1 { 
-                ShowHeader(" Compare Accounts ")
-                compareAccounts
+                showHeader(" Unlock User ")
+                Write-Host "Enter the name of the locked account firstname.lastname"
+                $UserName = Read-Host ">>>"
+                unlockUser($Credential, $UserName)
             }
             2 { 
-                ShowHeader(" Password Updates ")
-                passwordUpdates
+                showHeader(" Compare Accounts ")
+                Write-Host "Enter the first account to compare firstname.lastname"
+                $FirstUser = Read-Host ">>>"
+                Write-Host "Enter the second account to compare firstname.lastname"
+                $SecondUser = Read-Host ">>>"
+                compareAccounts($Credential, $FirstUser, $SecondUser)
             }
-            Default {
-                Write-Host "Invalid Entry" -ForegroundColor Red
+            3 { 
+                showHeader(" Password Check ")
+                Write-Host "Show last changed or next to expire?"
+                $select = Read-Host ">>>"
+                passwordCheck($Credential, $DaysUntilExpired)
             }
         }
     }
-    until($prompt -eq "q") # Fix no quit bug
-
-    Exit 
-#} 
-#else {
-#    Write-Host "You must be a Domain Administrator to run this script." -ForegroundColor Red
-#    Exit
-#}
+    Until($prompt -eq 0)
+    Exit
+}
