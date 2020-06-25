@@ -18,7 +18,7 @@
 #   ~ ResetPassword
 #
 # Compare AD Users
-#   ~ ShowUserProperties
+#   ~ ShowUserProperties ?
 #   ~ CompareAccounts
 #
 # ================================
@@ -140,7 +140,7 @@ Function ShowLocked {
     If($LockedAccounts) {
 
         # Output the locked accounts to the user.
-        $LockedAccounts | Format-Table -Property "Name", "LockedOut", "LastLogonDate" -AutoSize
+        Write-Output $LockedAccounts | Format-Table -Property Name, LockedOut, LastLogonDate -AutoSize | Out-Host
         Return $True
     }
 
@@ -166,21 +166,16 @@ Function UnlockUser {
     )
 
     Try {
-        # Locate the requrested AD account using DA credentials and save to variable.
-        If($ADaccount = Get-ADUser -Credential $Credential -Identity $UserName.ToString()) {
-            
-            # If the account is found locked, unlock it.
-            If($ADaccount.LockedOut -eq $True) {
-                Unlock-ADAccount -Identity $ADaccount -Credential $Credential
-                Write-Host $ADaccount.SamAccountName "unlocked sucessfuly" -ForegroundColor Green
-            }
+        # Search for a locked out account matching the name provided by the user.
+        $Locked = Search-ADAccount -LockedOut | Where-Object {$_.SamAccountName -match $UserName}
 
-            # Account was not locked out.
-            Else { Write-Host "$UserName is not locked out..." -ForegroundColor Red }
+        # If the account is found, unlock it.
+        if(($Lcoked)) {
+            Unlock-ADAccount -Identity $UserName -Credential $Credential
+            Write-Host $Locked.SamAccountName " $UserName Unlocked Sucessfuly" -ForegroundColor Green
         }
-
-        # Account does not exist.
-        Else { Write-Host "An account $UserName was not found..." -ForegroundColor Red }
+        # Account was not locked out.
+        Else { Write-Host " $UserName is not locked out..." -ForegroundColor Red }
     }
     # A fatal error may have occured.
     Catch { Write-Output $_ }
@@ -204,11 +199,11 @@ Function CompareAccounts {
 
     $Usercomparison = @() # Hash table to store results.
 
-    Write-Host "Enter the first account to compare firstname.lastname"
-    $FirstUser = Read-Host ">>>"
+    Write-Host "`n Enter the first account to compare firstname.lastname"
+    $FirstUser = Read-Host "`n >>>"
 
-    Write-Host "Enter the second account to compare firstname.lastname"
-    $SecondUser = Read-Host ">>>"
+    Write-Host "`n Enter the second account to compare firstname.lastname"
+    $SecondUser = Read-Host "`n >>>"
 
     # Save all user properties to variables.
     $ADUser1 = Get-ADUser $FirstUser -Properties * -Credential $Credential
@@ -263,8 +258,8 @@ Function ResetPassword {
     Try { 
         # Check if $UserName is an AD Account.
         If((Get-ADUser $UserName)) {
-            $Password = (Read-Host -Prompt "Provide New Password" -AsSecureString)
-            Set-ADAccountPassword -Identity $UserName -NewPassword $Password -Reset -Force -Credential $Credential
+            $Password = (Read-Host -Prompt "`n Provide New Password" -AsSecureString)
+            Set-ADAccountPassword -Identity $UserName -NewPassword $Password -Reset -Credential $Credential
             Set-ADuser -Identity $UserName -ChangePasswordAtLogon $ChangeAtLogon -Credential $Credential
             Return $True
         } 
@@ -292,62 +287,64 @@ Function PasswordCheck {
         [String] $Mode 
     )
 
-    Begin {
-        $AccountList = @() # Hash table to store all accounts expiring in next 30 days.
+    $AccountList = @() # Hash table to store all accounts expiring in next 30 days.
 
-        # DateTime Object for comparison to accounts set to 'Never Expire'.
-        $NeverExpires = (Get-date -Year 1600 -Month 12 -Day 31 -Hour 19 -Minute 0 -Second 0)
+    # DateTime Object for comparison to accounts set to 'Never Expire'.
+    $NeverExpires = (Get-date -Year 1600 -Month 12 -Day 31 -Hour 19 -Minute 0 -Second 0)
 
-        # Search for the expiry date for each account and save to a variable.
-        $Accounts = (Get-ADUser -Credential $Credential -filter { Enabled -eq $True -and PasswordNeverExpires -eq $False } –Properties "DisplayName", "msDS-UserPasswordExpiryTimeComputed" |
-        Select-Object -Property "DisplayName", @{Name="ExpiryDate";Expression={[datetime]::FromFileTime($_."msDS-UserPasswordExpiryTimeComputed")}})
-    }
+    # Search for the expiry date for each account and save to a variable.
+    $Accounts = (Get-ADUser -Credential $Credential -filter { Enabled -eq $True -and PasswordNeverExpires -eq $False } –Properties "DisplayName", "msDS-UserPasswordExpiryTimeComputed" |
+    Select-Object -Property "DisplayName", @{Name="ExpiryDate";Expression={[datetime]::FromFileTime($_."msDS-UserPasswordExpiryTimeComputed")}})
 
-    Process {
-        # Iterate through the list of all accounts.
-        $Accounts | ForEach-Object {
+    # Iterate through the list of all accounts.
+    $Accounts | ForEach-Object {
 
-            $CurrentAccount = $_
+        $CurrentAccount = $_
 
-            # This checks if the account is set to Never Expire (Date would be set to 1600-12-31).
-            If($_."ExpiryDate" -gt $NeverExpires) {
-    
-                # Calculate the time remaining between now and the expiry.
-                $TimeRemaining = (New-TimeSpan -End $_.ExpiryDate)
+        # This checks if the account is set to Never Expire (Date would be set to 1600-12-31).
+        If($_."ExpiryDate" -gt $NeverExpires) {
 
-                $Mode = "NextExpire"
-                Switch($Mode) {
+            # Calculate the time remaining between now and the expiry.
+            $TimeRemaining = (New-TimeSpan -End $_.ExpiryDate)
 
-                    "NextExpire" {
-                        # If the password will expire in the next 30 days, save the information to an object.
-                        If($TimeRemaining.Days -gt 0 -and $TimeRemaining.Days -le 30) {
-                            $ExpireSoon = New-Object PSObject -Property ( [Ordered] @{
-                                UserName = $CurrentAccount.DisplayName
-                                DaysRemaining = $TimeRemaining.Days
-                                ExpiryDate = $CurrentAccount.ExpiryDate
-                            })
-                            $AccountList += $ExpireSoon # Add the account to the expire list.
-                        }
+            Switch($Mode) {
+
+                "NextExpire" {
+                    # If the password will expire in the next 30 days, save the information to an object.
+                    If($TimeRemaining.Days -gt 0 -and $TimeRemaining.Days -le 30) {
+                        $ExpireSoon = New-Object PSObject -Property ( [Ordered] @{
+                            UserName = $CurrentAccount.DisplayName
+                            DaysRemaining = $TimeRemaining.Days
+                            ExpiryDate = $CurrentAccount.ExpiryDate
+                        })
+                        $AccountList += $ExpireSoon # Add the account to the expire list.
                     }
+                }
 
-                    "LastChanged" {
-                        # If the password was changed in the last -30 days, save the information to an object.
-                        If($TimeRemaining.Days -le 0 -and $TimeRemaining.Days -ge -30) {
-                            $RecentlyChanged = New-Object PSObject -Property ( [Ordered] @{
-                                UserName = $CurrentAccount.DisplayName
-                                DaysRemaining = $TimeRemaining.Days
-                                ExpiryDate = $CurrentAccount.ExpiryDate
-                            })
-                            $AccountList += $RecentlyChanged # Add the account to the list.
-                        }
+                "LastChanged" {
+                    # If the password was changed in the last -30 days, save the information to an object.
+                    If($TimeRemaining.Days -le 0 -and $TimeRemaining.Days -ge -30) {
+                        $RecentlyChanged = New-Object PSObject -Property ( [Ordered] @{
+                            UserName = $CurrentAccount.DisplayName
+                            DaysSinceChange = $TimeRemaining.Days
+                            ExpiryDate = $CurrentAccount.ExpiryDate
+                        })
+                        $AccountList += $RecentlyChanged # Add the account to the list.
                     }
                 }
             }
         }
+    }
+
+    If($Mode -eq "NextExpire") {
         # Print out all the accounts expiring in the next 30 days.
         $AccountList | Sort-Object -Property DaysRemaining | Format-Table -AutoSize
     }
-    End { Return $AccountList }
+
+    If($Mode -eq "LastChanged") {
+        $AccountList | Sort-Object -Property DaysSinceChange -Descending | Format-Table -AutoSize
+    }
+
 }
 
 
@@ -383,7 +380,7 @@ If($Credential) {
 
                     Switch($UnlockChoice) {
                         0 {
-                            Write-Host " Enter the name of the locked account firstname.lastname"
+                            Write-Host "`n Enter the name of the locked account firstname.lastname"
                             $UserName = Read-Host "`n >>>"
                             UnlockUser -Credential $Credential -UserName $UserName
                         }
@@ -412,8 +409,14 @@ If($Credential) {
                         $ChangeAtLogon = $host.ui.PromptForChoice("Change password upon next logon?", " ", $YesOrNo, 0)
                         
                         Switch($ChangeAtLogon) {
-                            0 { ResetPassword -Credential $Credential -UserName $UserName -ChangeAtLogon $True }
-                            1 { ResetPassword -Credential $Credential -UserName $UserName -ChangeAtLogon $False}
+                            0 { $status = ResetPassword -Credential $Credential -UserName $UserName -ChangeAtLogon $True }
+                            1 { $status = ResetPassword -Credential $Credential -UserName $UserName -ChangeAtLogon $False}
+                        }
+
+                        If($status) {
+                            Write-Host "`n  Password Changed Sucessfuly!" -ForegroundColor Green
+                        } Else {
+                            Write-Host "`n  Error setting new password" -ForegroundColor Red
                         }
                     }
                 }
